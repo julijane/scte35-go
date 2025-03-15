@@ -789,6 +789,106 @@ func TestDecodeHex(t *testing.T) {
 	}
 }
 
+func TestDecodeBytes(t *testing.T) {
+	// when adding tests that contain multiple splice descriptors, care must be
+	// taken to ensure they are in the order specified in the custom UnmarshalXML
+	// implementation, otherwise misleading error may occur
+	cases := map[string]struct {
+		bytes    []byte
+		err      error
+		expected scte35.SpliceInfoSection
+	}{
+		"Sample 14.1 time_signal - Placement Opportunity Start": {
+			bytes: []byte{
+				0xFC, 0x30, 0x34, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xF0, 0x05, 0x06, 0xFE, 0x72,
+				0xBD, 0x00, 0x50, 0x00, 0x1E, 0x02, 0x1C, 0x43, 0x55, 0x45, 0x49, 0x48, 0x00, 0x00, 0x8E, 0x7F,
+				0xCF, 0x00, 0x01, 0xA5, 0x99, 0xB0, 0x08, 0x08, 0x00, 0x00, 0x00, 0x00, 0x2C, 0xA0, 0xA1, 0x8A,
+				0x34, 0x02, 0x00, 0x9A, 0xC9, 0xD1, 0x7E,
+			},
+			expected: scte35.SpliceInfoSection{
+				EncryptedPacket: scte35.EncryptedPacket{EncryptionAlgorithm: scte35.EncryptionAlgorithmNone, CWIndex: 255},
+				SpliceCommand: &scte35.TimeSignal{
+					SpliceTime: scte35.SpliceTime{
+						PTSTime: ptr(uint64(0x072bd0050)),
+					},
+				},
+				SpliceDescriptors: []scte35.SpliceDescriptor{
+					&scte35.SegmentationDescriptor{
+						DeliveryRestrictions: &scte35.DeliveryRestrictions{
+							NoRegionalBlackoutFlag: true,
+							ArchiveAllowedFlag:     true,
+							DeviceRestrictions:     scte35.DeviceRestrictionsNone,
+						},
+						SegmentationEventID:  uint32(0x4800008e),
+						SegmentationTypeID:   scte35.SegmentationTypeProviderPOStart,
+						SegmentationDuration: ptr(uint64(0x0001a599b0)),
+						SegmentationUPIDs: []scte35.SegmentationUPID{
+							scte35.NewSegmentationUPID(scte35.SegmentationUPIDTypeTI, toBytes(0x000000002ca0a18a)),
+						},
+						SegmentNum: 2,
+					},
+				},
+				Tier:    4095,
+				SAPType: 3,
+			},
+		},
+		"Sample 14.2 splice_insert (no prefix)": {
+			bytes: []byte{
+				0xFC, 0x30, 0x2F, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xF0, 0x14, 0x05, 0x48, 0x00,
+				0x00, 0x8F, 0x7F, 0xEF, 0xFE, 0x73, 0x69, 0xC0, 0x2E, 0xFE, 0x00, 0x52, 0xCC, 0xF5, 0x00, 0x00,
+				0x00, 0x00, 0x00, 0x0A, 0x00, 0x08, 0x43, 0x55, 0x45, 0x49, 0x00, 0x00, 0x01, 0x35, 0x62, 0xDB,
+				0xA3, 0x0A,
+			},
+			expected: scte35.SpliceInfoSection{
+				EncryptedPacket: scte35.EncryptedPacket{EncryptionAlgorithm: scte35.EncryptionAlgorithmNone, CWIndex: 255},
+				SpliceCommand: &scte35.SpliceInsert{
+					BreakDuration: &scte35.BreakDuration{
+						AutoReturn: true,
+						Duration:   uint64(0x00052ccf5),
+					},
+					SpliceEventID:         uint32(0x4800008f),
+					OutOfNetworkIndicator: true,
+					Program: &scte35.SpliceInsertProgram{
+						SpliceTime: scte35.SpliceTime{
+							PTSTime: ptr(uint64(0x07369c02e)),
+						},
+					},
+				},
+				SpliceDescriptors: []scte35.SpliceDescriptor{
+					&scte35.AvailDescriptor{
+						ProviderAvailID: 0x00000135,
+					},
+				},
+				Tier:    4095,
+				SAPType: 3,
+			},
+		},
+	}
+
+	for k, c := range cases {
+		t.Run(k, func(t *testing.T) {
+			// decode the binary
+			sis, err := scte35.DecodeBytes(c.bytes)
+			require.Equal(t, c.err, err)
+			if err != nil {
+				return
+			}
+
+			// test encode/decode XML
+			encodedXML := toXML(sis)
+			assert.Equal(t, toXML(&c.expected), encodedXML)
+			decodedXML := scte35.SpliceInfoSection{}
+			assert.NoError(t, xml.Unmarshal([]byte(encodedXML), &decodedXML))
+
+			// test encode/decode JSON
+			encodedJSON := toJSON(sis)
+			assert.Equal(t, toJSON(&c.expected), encodedJSON)
+			decodedJSON := scte35.SpliceInfoSection{}
+			require.NoError(t, json.Unmarshal([]byte(encodedJSON), &decodedJSON))
+		})
+	}
+}
+
 func TestEncodeWithAlignmentStuffing(t *testing.T) {
 	cases := map[string]struct {
 		name   string
